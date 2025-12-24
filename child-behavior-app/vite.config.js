@@ -15,6 +15,9 @@ export default defineConfig({
         short_name: 'رحلة الأبطال',
         description: 'تطبيق تفاعلي لتعديل سلوك الأطفال باستخدام الذكاء الاصطناعي',
         theme_color: '#FF6B9D',
+        background_color: '#FFF9F0',
+        display: 'standalone',
+        orientation: 'portrait',
         icons: [
           {
             src: 'pwa-192x192.png',
