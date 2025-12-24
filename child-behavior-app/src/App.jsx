@@ -172,6 +172,8 @@ const ChildBehaviorApp = () => {
     }
   ];
 
+  // --- Function Definitions ---
+
   // Achievement System
   const checkAchievements = useCallback(() => {
     const newAchievements = [];
@@ -189,37 +191,181 @@ const ChildBehaviorApp = () => {
     }
   }, [achievements]);
 
-  // Session Timer
-  useEffect(() => {
-    if (isCallActive && !sessionStats.startTime) {
-      setSessionStats(prev => ({ ...prev, startTime: Date.now() }));
-      sessionTimerRef.current = setInterval(() => {
-        setSessionStats(prev => ({
-          ...prev,
-          duration: Math.floor((Date.now() - prev.startTime) / 1000)
-        }));
-      }, 1000);
+  const endCall = useCallback((reason = 'user') => {
+    setIsCallActive(false);
+    isCallActiveRef.current = false;
+    isProcessingRef.current = false;
+    setAiStatus('');
+
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch (e) { /* ignore error if already stopped */ }
     }
 
-    return () => {
-      if (sessionTimerRef.current) {
-        clearInterval(sessionTimerRef.current);
+    if (noSpeechTimeoutRef.current) {
+      clearTimeout(noSpeechTimeoutRef.current);
+    }
+
+    window.speechSynthesis.cancel();
+
+    // Log session data
+    logInteraction({
+      character: selectedCharacter?.id,
+      behavior: selectedBehavior?.id,
+      duration: sessionStats.duration,
+      turns: turnCountRef.current,
+      reason: reason,
+      childName: childName
+    });
+
+    // Show completion message based on reason
+    if (reason === 'time_limit') {
+      setError("انتهى وقت المحادثة! أحسنت، نراك في المرة القادمة 🌟");
+    } else if (reason === 'turn_limit') {
+      setError("محادثة رائعة! دعنا نأخذ استراحة الآن 🎉");
+    }
+
+    checkAchievements();
+  }, [selectedCharacter, selectedBehavior, sessionStats.duration, childName, checkAchievements]);
+
+  const startListening = useCallback(() => {
+    if (!isCallActiveRef.current) return;
+    setAiStatus('listening');
+
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.start();
+      } catch (e) {
+        console.log("Recognition already started or error:", e);
       }
+    }
+  }, []);
+
+  const handleAIInteraction = useCallback(async (userText) => {
+    if (!isCallActiveRef.current || isProcessingRef.current) return;
+
+    isProcessingRef.current = true;
+    setAiStatus('thinking');
+    turnCountRef.current += 1;
+
+    // Stop recognition while processing and speaking
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch (e) { /* ignore error if already stopped */ }
+    }
+
+    if (noSpeechTimeoutRef.current) {
+      clearTimeout(noSpeechTimeoutRef.current);
+    }
+
+    // Add to conversation history
+    setConversationHistory(prev => [...prev, { speaker: 'child', text: userText }]);
+
+    const aiTimeout = setTimeout(() => {
+      if (isProcessingRef.current && aiStatus === 'thinking') {
+        console.log("AI timeout, using fallback");
+      }
+    }, 12000);
+
+    try {
+      const response = await getAIResponse(
+        selectedCharacter,
+        selectedBehavior,
+        userText,
+        conversationHistory,
+        childName
+      );
+
+      clearTimeout(aiTimeout);
+
+      const textToSpeak = response || "أنت رائع جداً! استمر في الحديث!";
+
+      // Add AI response to history
+      setConversationHistory(prev => [...prev, { speaker: 'ai', text: textToSpeak }]);
+
+      setAiStatus('speaking');
+      await speak(textToSpeak, selectedCharacter.id);
+
+    } catch (err) {
+      console.error("AI Error:", err);
+      setAiStatus('speaking');
+
+      const fallbackResponses = [
+        "أنا أسمعك يا بطل، أنت رائع!",
+        "ما شاء الله عليك! أخبرني المزيد",
+        "يا لك من بطل ذكي! استمر",
+        "أنت تجعلني فخوراً جداً!"
+      ];
+
+      const randomResponse = fallbackResponses[Math.floor(Math.random() * fallbackResponses.length)];
+      await speak(randomResponse, selectedCharacter.id);
+
+    } finally {
+      isProcessingRef.current = false;
+
+      if (isCallActiveRef.current) {
+        startListening();
+      }
+    }
+  }, [selectedCharacter, selectedBehavior, conversationHistory, childName, aiStatus, startListening]);
+
+  const initialGreeting = useCallback(async () => {
+    if (!isCallActiveRef.current) return;
+    setAiStatus('speaking');
+
+    const personalGreeting = childName
+      ? `أهلاً ${childName}! أنا ${selectedCharacter.name}.`
+      : `أهلاً يا بطل! أنا ${selectedCharacter.name}.`;
+
+    const greeting = `${personalGreeting} ${selectedCharacter.greeting} اليوم سنتحدث عن ${selectedBehavior.name} ${selectedBehavior.emoji}. هل أنت مستعد؟`;
+
+    await speak(greeting, selectedCharacter.id);
+
+    if (isCallActiveRef.current) startListening();
+  }, [selectedCharacter, selectedBehavior, childName, startListening]);
+
+  const playRingingSound = useCallback(() => {
+    if (!audioCtxRef.current) return;
+    const ctx = audioCtxRef.current;
+
+    const playTone = (freq, start, duration = 0.5) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, start);
+      gain.gain.setValueAtTime(0.08, start);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(start);
+      osc.stop(start + duration);
     };
-  }, [isCallActive, sessionStats.startTime]);
 
-  // Check time limits
-  useEffect(() => {
-    if (sessionStats.duration >= parentalControls.timeLimit * 60) {
-      endCall('time_limit');
+    const now = ctx.currentTime;
+    // Create a more pleasant ringing pattern
+    for (let i = 0; i < 4; i++) {
+      playTone(523.25, now + i * 2); // C5
+      playTone(659.25, now + i * 2 + 0.3); // E5
+      playTone(783.99, now + i * 2 + 0.6); // G5
     }
-    if (turnCountRef.current >= parentalControls.maxTurns) {
-      endCall('turn_limit');
-    }
-  }, [sessionStats.duration, parentalControls, endCall]);
+  }, []);
 
-  // Initialize Audio and Speech
-  const initializeApp = () => {
+  const startCall = useCallback(() => {
+    if (!selectedCharacter || !selectedBehavior) return;
+
+    setIsRinging(true);
+    isCallActiveRef.current = true;
+    isProcessingRef.current = false;
+    turnCountRef.current = 0;
+
+    playRingingSound();
+
+    setTimeout(() => {
+      setIsRinging(false);
+      setIsCallActive(true);
+      initialGreeting();
+    }, 4000);
+  }, [selectedCharacter, selectedBehavior, playRingingSound, initialGreeting]);
+
+  const initializeApp = useCallback(() => {
     if (hasStarted) return;
     setHasStarted(true);
     setShowNamePrompt(true);
@@ -314,185 +460,44 @@ const ChildBehaviorApp = () => {
     // Trigger a silent sound to unlock audio on iOS
     const utterance = new SpeechSynthesisUtterance("");
     window.speechSynthesis.speak(utterance);
-  };
+  }, [hasStarted, handleAIInteraction]);
 
+  // --- Effects ---
+
+  // Sync AI status to window for recognition.onend access
   useEffect(() => {
     window.currentAiStatus = aiStatus;
   }, [aiStatus]);
 
-  const playRingingSound = () => {
-    if (!audioCtxRef.current) return;
-    const ctx = audioCtxRef.current;
+  // Session Timer
+  useEffect(() => {
+    if (isCallActive && !sessionStats.startTime) {
+      setSessionStats(prev => ({ ...prev, startTime: Date.now() }));
+      sessionTimerRef.current = setInterval(() => {
+        setSessionStats(prev => ({
+          ...prev,
+          duration: Math.floor((Date.now() - prev.startTime) / 1000)
+        }));
+      }, 1000);
+    }
 
-    const playTone = (freq, start, duration = 0.5) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(freq, start);
-      gain.gain.setValueAtTime(0.08, start);
-      gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(start);
-      osc.stop(start + duration);
+    return () => {
+      if (sessionTimerRef.current) {
+        clearInterval(sessionTimerRef.current);
+      }
     };
+  }, [isCallActive, sessionStats.startTime]);
 
-    const now = ctx.currentTime;
-    // Create a more pleasant ringing pattern
-    for (let i = 0; i < 4; i++) {
-      playTone(523.25, now + i * 2); // C5
-      playTone(659.25, now + i * 2 + 0.3); // E5
-      playTone(783.99, now + i * 2 + 0.6); // G5
+  // Check time limits
+  useEffect(() => {
+    if (sessionStats.duration >= parentalControls.timeLimit * 60) {
+      endCall('time_limit');
     }
-  };
-
-  const startCall = () => {
-    if (!selectedCharacter || !selectedBehavior) return;
-
-    setIsRinging(true);
-    isCallActiveRef.current = true;
-    isProcessingRef.current = false;
-    turnCountRef.current = 0;
-
-    playRingingSound();
-
-    setTimeout(() => {
-      setIsRinging(false);
-      setIsCallActive(true);
-      initialGreeting();
-    }, 4000);
-  };
-
-  const endCall = useCallback((reason = 'user') => {
-    setIsCallActive(false);
-    isCallActiveRef.current = false;
-    isProcessingRef.current = false;
-    setAiStatus('');
-
-    if (recognitionRef.current) {
-      try { recognitionRef.current.stop(); } catch (e) { /* ignore error if already stopped */ }
+    if (turnCountRef.current >= parentalControls.maxTurns) {
+      endCall('turn_limit');
     }
+  }, [sessionStats.duration, parentalControls, endCall]);
 
-    if (noSpeechTimeoutRef.current) {
-      clearTimeout(noSpeechTimeoutRef.current);
-    }
-
-    window.speechSynthesis.cancel();
-
-    // Log session data
-    logInteraction({
-      character: selectedCharacter.id,
-      behavior: selectedBehavior.id,
-      duration: sessionStats.duration,
-      turns: turnCountRef.current,
-      reason: reason,
-      childName: childName
-    });
-
-    // Show completion message based on reason
-    if (reason === 'time_limit') {
-      setError("انتهى وقت المحادثة! أحسنت، نراك في المرة القادمة 🌟");
-    } else if (reason === 'turn_limit') {
-      setError("محادثة رائعة! دعنا نأخذ استراحة الآن 🎉");
-    }
-
-    checkAchievements();
-  }, [selectedCharacter, selectedBehavior, sessionStats.duration, childName, checkAchievements]);
-
-  const initialGreeting = async () => {
-    if (!isCallActiveRef.current) return;
-    setAiStatus('speaking');
-
-    const personalGreeting = childName
-      ? `أهلاً ${childName}! أنا ${selectedCharacter.name}.`
-      : `أهلاً يا بطل! أنا ${selectedCharacter.name}.`;
-
-    const greeting = `${personalGreeting} ${selectedCharacter.greeting} اليوم سنتحدث عن ${selectedBehavior.name} ${selectedBehavior.emoji}. هل أنت مستعد؟`;
-
-    await speak(greeting, selectedCharacter.id);
-
-    if (isCallActiveRef.current) startListening();
-  };
-
-  const startListening = () => {
-    if (!isCallActiveRef.current) return;
-    setAiStatus('listening');
-
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.start();
-      } catch (e) {
-        console.log("Recognition already started or error:", e);
-      }
-    }
-  };
-
-  const handleAIInteraction = async (userText) => {
-    if (!isCallActiveRef.current || isProcessingRef.current) return;
-
-    isProcessingRef.current = true;
-    setAiStatus('thinking');
-    turnCountRef.current += 1;
-
-    // Stop recognition while processing and speaking
-    if (recognitionRef.current) {
-      try { recognitionRef.current.stop(); } catch (e) { /* ignore error if already stopped */ }
-    }
-
-    if (noSpeechTimeoutRef.current) {
-      clearTimeout(noSpeechTimeoutRef.current);
-    }
-
-    // Add to conversation history
-    setConversationHistory(prev => [...prev, { speaker: 'child', text: userText }]);
-
-    const aiTimeout = setTimeout(() => {
-      if (isProcessingRef.current && aiStatus === 'thinking') {
-        console.log("AI timeout, using fallback");
-      }
-    }, 12000);
-
-    try {
-      const response = await getAIResponse(
-        selectedCharacter,
-        selectedBehavior,
-        userText,
-        conversationHistory,
-        childName
-      );
-
-      clearTimeout(aiTimeout);
-
-      const textToSpeak = response || "أنت رائع جداً! استمر في الحديث!";
-
-      // Add AI response to history
-      setConversationHistory(prev => [...prev, { speaker: 'ai', text: textToSpeak }]);
-
-      setAiStatus('speaking');
-      await speak(textToSpeak, selectedCharacter.id);
-
-    } catch (err) {
-      console.error("AI Error:", err);
-      setAiStatus('speaking');
-
-      const fallbackResponses = [
-        "أنا أسمعك يا بطل، أنت رائع!",
-        "ما شاء الله عليك! أخبرني المزيد",
-        "يا لك من بطل ذكي! استمر",
-        "أنت تجعلني فخوراً جداً!"
-      ];
-
-      const randomResponse = fallbackResponses[Math.floor(Math.random() * fallbackResponses.length)];
-      await speak(randomResponse, selectedCharacter.id);
-
-    } finally {
-      isProcessingRef.current = false;
-
-      if (isCallActiveRef.current) {
-        startListening();
-      }
-    }
-  };
 
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60);
