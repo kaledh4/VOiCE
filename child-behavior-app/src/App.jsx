@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, Phone, PhoneOff, Star, Sparkles, Zap, Heart, Trophy, Users, ChevronRight, Play, Pause, X } from 'lucide-react';
+import { Mic, MicOff, Phone, PhoneOff, Star, Sparkles, Zap, Heart, Trophy, Users, ChevronRight, Play, Pause, X, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getAIResponse, speak } from './api';
 
@@ -8,62 +8,22 @@ const ChildBehaviorApp = () => {
   const [selectedBehavior, setSelectedBehavior] = useState(null);
   const [isCallActive, setIsCallActive] = useState(false);
   const [isRinging, setIsRinging] = useState(false);
-  const [isListening, setIsListening] = useState(false);
   const [aiStatus, setAiStatus] = useState(''); // 'thinking', 'speaking', 'listening'
 
   const recognitionRef = useRef(null);
   const audioCtxRef = useRef(null);
+  const isCallActiveRef = useRef(false);
 
-  // Characters with premium styling
+  // Characters
   const characters = [
-    {
-      id: 'zuzu',
-      name: 'زوزو القوية',
-      emoji: '💪',
-      color: '#FF6B9D',
-      bgPattern: 'radial-gradient(circle at 20% 80%, rgba(255,107,157,0.2) 0%, transparent 50%)',
-      personality: 'قوية وشجاعة',
-      description: 'بطلة خارقة تحب التحديات'
-    },
-    {
-      id: 'elsa',
-      name: 'إلسا',
-      emoji: '❄️',
-      color: '#4FACFE',
-      bgPattern: 'radial-gradient(circle at 80% 20%, rgba(79,172,254,0.2) 0%, transparent 50%)',
-      personality: 'حكيمة وهادئة',
-      description: 'ملكة الثلج الطيبة'
-    },
-    {
-      id: 'spiderman',
-      name: 'سبايدرمان',
-      emoji: '🕷️',
-      color: '#E94560',
-      bgPattern: 'radial-gradient(circle at 50% 50%, rgba(233,69,96,0.2) 0%, transparent 50%)',
-      personality: 'ذكي ومرح',
-      description: 'البطل الخارق'
-    },
-    {
-      id: 'moana',
-      name: 'موانا',
-      emoji: '🌊',
-      color: '#00D9FF',
-      bgPattern: 'radial-gradient(circle at 30% 70%, rgba(0,217,255,0.2) 0%, transparent 50%)',
-      personality: 'مغامرة وطموحة',
-      description: 'المستكشفة الشجاعة'
-    },
-    {
-      id: 'antar',
-      name: 'عنتر',
-      emoji: '🗡️',
-      color: '#FFB800',
-      bgPattern: 'radial-gradient(circle at 70% 30%, rgba(255,184,0,0.2) 0%, transparent 50%)',
-      personality: 'شجاع ونبيل',
-      description: 'الفارس العربي'
-    }
+    { id: 'zuzu', name: 'زوزو القوية', emoji: '💪', color: '#FF6B9D', personality: 'قوية وشجاعة', description: 'بطلة خارقة تحب التحديات' },
+    { id: 'elsa', name: 'إلسا', emoji: '❄️', color: '#4FACFE', personality: 'حكيمة وهادئة', description: 'ملكة الثلج الطيبة' },
+    { id: 'spiderman', name: 'سبايدرمان', emoji: '🕷️', color: '#E94560', personality: 'ذكي ومرح', description: 'البطل الخارق' },
+    { id: 'moana', name: 'موانا', emoji: '🌊', color: '#00D9FF', personality: 'مغامرة وطموحة', description: 'المستكشفة الشجاعة' },
+    { id: 'antar', name: 'عنتر', emoji: '🗡️', color: '#FFB800', personality: 'شجاع ونبيل', description: 'الفارس العربي' }
   ];
 
-  // Behaviors with premium styling
+  // Behaviors
   const behaviors = [
     { id: 'tidiness', name: 'الترتيب والنظافة', emoji: '🧹', color: '#4ECDC4', shortDesc: 'غرفة مرتبة، عقل صافي' },
     { id: 'respect', name: 'احترام الوالدين', emoji: '❤️', color: '#FF6B9D', shortDesc: 'قلب مليء بالحب' },
@@ -73,7 +33,45 @@ const ChildBehaviorApp = () => {
     { id: 'sleep', name: 'النوم المبكر', emoji: '🌙', color: '#AA96DA', shortDesc: 'نم جيداً، استيقظ بطلاً' }
   ];
 
-  // Sound Effects
+  // Initialize Speech Recognition once
+  useEffect(() => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = 'ar-SA';
+
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        console.log("Heard:", transcript);
+        handleAIInteraction(transcript);
+      };
+
+      recognition.onerror = (event) => {
+        console.error("Speech recognition error:", event.error);
+        if (event.error === 'no-speech' && isCallActiveRef.current) {
+          // Restart if no speech detected but call is active
+          try { recognition.start(); } catch (e) { }
+        }
+      };
+
+      recognition.onend = () => {
+        // Automatically restart listening if we are still in 'listening' status
+        if (isCallActiveRef.current && window.currentAiStatus === 'listening') {
+          try { recognition.start(); } catch (e) { }
+        }
+      };
+
+      recognitionRef.current = recognition;
+    }
+  }, []);
+
+  // Update a global-like variable to track status for the onend handler
+  useEffect(() => {
+    window.currentAiStatus = aiStatus;
+  }, [aiStatus]);
+
   const playRingingSound = () => {
     if (!audioCtxRef.current) audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
     const ctx = audioCtxRef.current;
@@ -96,28 +94,10 @@ const ChildBehaviorApp = () => {
     }
   };
 
-  // Voice Recognition Setup
-  useEffect(() => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.continuous = false;
-      recognitionRef.current.lang = 'ar-SA';
-      recognitionRef.current.onresult = (event) => {
-        const transcript = event.results[0][0].transcript;
-        handleAIInteraction(transcript);
-      };
-      recognitionRef.current.onend = () => {
-        if (isCallActive && aiStatus === 'listening') {
-          try { recognitionRef.current.start(); } catch (e) { }
-        }
-      };
-    }
-  }, [isCallActive, aiStatus]);
-
   const startCall = () => {
     if (!selectedCharacter || !selectedBehavior) return;
     setIsRinging(true);
+    isCallActiveRef.current = true;
     playRingingSound();
     setTimeout(() => {
       setIsRinging(false);
@@ -128,7 +108,7 @@ const ChildBehaviorApp = () => {
 
   const endCall = () => {
     setIsCallActive(false);
-    setIsListening(false);
+    isCallActiveRef.current = false;
     setAiStatus('');
     if (recognitionRef.current) recognitionRef.current.stop();
     window.speechSynthesis.cancel();
@@ -138,24 +118,35 @@ const ChildBehaviorApp = () => {
     setAiStatus('speaking');
     const greeting = `أهلاً يا بطل! أنا ${selectedCharacter.name}. أنا سعيد جداً بالحديث معك عن ${selectedBehavior.name}. كيف حالك اليوم؟`;
     await speak(greeting);
-    startListening();
+    if (isCallActiveRef.current) startListening();
   };
 
   const startListening = () => {
     setAiStatus('listening');
-    setIsListening(true);
-    try { recognitionRef.current.start(); } catch (e) { }
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.start();
+      } catch (e) {
+        console.log("Recognition already started or error:", e);
+      }
+    }
   };
 
   const handleAIInteraction = async (userText) => {
+    if (!isCallActiveRef.current) return;
+
     setAiStatus('thinking');
-    setIsListening(false);
     if (recognitionRef.current) recognitionRef.current.stop();
+
     const response = await getAIResponse(selectedCharacter, selectedBehavior, userText);
     const textToSpeak = response || "أنت رائع جداً! أخبرني المزيد!";
+
     setAiStatus('speaking');
     await speak(textToSpeak);
-    if (isCallActive) startListening();
+
+    if (isCallActiveRef.current) {
+      startListening();
+    }
   };
 
   return (
@@ -380,18 +371,40 @@ const ChildBehaviorApp = () => {
 
             {/* Status Indicator */}
             {!isRinging && (
-              <div style={{ minHeight: '100px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '50px' }}>
+              <div style={{ minHeight: '120px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', marginBottom: '50px', gap: '20px' }}>
                 {aiStatus === 'listening' && (
-                  <motion.div animate={{ scale: [1, 1.2, 1] }} transition={{ repeat: Infinity }} style={{ display: 'flex', alignItems: 'center', gap: '15px', fontSize: '24px', fontWeight: 800 }}>
-                    <Mic size={40} />
-                    أنا أسمعك... تحدث!
+                  <motion.div
+                    animate={{ scale: [1, 1.2, 1] }}
+                    transition={{ repeat: Infinity }}
+                    style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '15px' }}
+                  >
+                    <div style={{ background: 'rgba(255,255,255,0.2)', padding: '20px', borderRadius: '50%' }}>
+                      <Mic size={50} />
+                    </div>
+                    <div style={{ fontSize: '24px', fontWeight: 800 }}>أنا أسمعك... تحدث!</div>
                   </motion.div>
                 )}
                 {aiStatus === 'thinking' && (
-                  <div style={{ fontSize: '24px', fontWeight: 800, animation: 'pulse 1s infinite' }}>مممم... دعني أفكر... 💭</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '15px' }}>
+                    <Loader2 size={50} className="animate-spin" />
+                    <div style={{ fontSize: '24px', fontWeight: 800 }}>مممم... دعني أفكر... 💭</div>
+                  </div>
                 )}
                 {aiStatus === 'speaking' && (
-                  <div style={{ fontSize: '24px', fontWeight: 800 }}>استمع إلي! 🌟</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '15px' }}>
+                    <Sparkles size={50} />
+                    <div style={{ fontSize: '24px', fontWeight: 800 }}>استمع إلي! 🌟</div>
+                  </div>
+                )}
+
+                {/* Manual Trigger if voice recognition fails to start */}
+                {aiStatus === 'listening' && (
+                  <button
+                    onClick={() => startListening()}
+                    style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid white', borderRadius: '10px', padding: '5px 15px', fontSize: '12px', color: 'white', cursor: 'pointer' }}
+                  >
+                    إذا لم أسمعك، اضغط هنا
+                  </button>
                 )}
               </div>
             )}
@@ -428,9 +441,13 @@ const ChildBehaviorApp = () => {
           50% { transform: translateY(-20px) rotate(5deg); }
         }
         
-        @keyframes pulse {
-          0%, 100% { opacity: 1; transform: scale(1); }
-          50% { opacity: 0.7; transform: scale(1.05); }
+        .animate-spin {
+          animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
         }
         
         body {
