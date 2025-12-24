@@ -7,7 +7,9 @@ const ChildBehaviorApp = () => {
   // Core States
   const [hasStarted, setHasStarted] = useState(false);
   const [selectedCharacter, setSelectedCharacter] = useState(null);
+  useEffect(() => { selectedCharacterRef.current = selectedCharacter; }, [selectedCharacter]);
   const [selectedBehavior, setSelectedBehavior] = useState(null);
+  useEffect(() => { selectedBehaviorRef.current = selectedBehavior; }, [selectedBehavior]);
   const [isCallActive, setIsCallActive] = useState(false);
   const [isRinging, setIsRinging] = useState(false);
   const [aiStatus, setAiStatus] = useState(''); // 'thinking', 'speaking', 'listening'
@@ -16,21 +18,28 @@ const ChildBehaviorApp = () => {
 
   // Advanced Features
   const [conversationHistory, setConversationHistory] = useState([]);
+  useEffect(() => { conversationHistoryRef.current = conversationHistory; }, [conversationHistory]);
   const [sessionStats, setSessionStats] = useState({ turns: 0, duration: 0, startTime: null });
   const [parentalControls, _setParentalControls] = useState({ timeLimit: 10, maxTurns: 15 }); // minutes
   const [achievements, setAchievements] = useState([]);
   const [childName, setChildName] = useState('');
+  useEffect(() => { childNameRef.current = childName; }, [childName]);
   const [showNamePrompt, setShowNamePrompt] = useState(false);
 
-  // Refs
+  // Refs for stable state access in callbacks
   const recognitionRef = useRef(null);
   const audioCtxRef = useRef(null);
   const isCallActiveRef = useRef(false);
   const isProcessingRef = useRef(false);
   const sessionTimerRef = useRef(null);
-  const [isMicActuallyWorking, setIsMicActuallyWorking] = useState(false);
   const noSpeechTimeoutRef = useRef(null);
   const turnCountRef = useRef(0);
+  const conversationHistoryRef = useRef([]);
+  const childNameRef = useRef('');
+  const selectedCharacterRef = useRef(null);
+  const selectedBehaviorRef = useRef(null);
+
+  const [isMicActuallyWorking, setIsMicActuallyWorking] = useState(false);
 
   // Enhanced Characters with more depth
   const characters = [
@@ -249,63 +258,47 @@ const ChildBehaviorApp = () => {
 
     // Stop recognition while processing and speaking
     if (recognitionRef.current) {
-      try { recognitionRef.current.stop(); } catch (e) { /* ignore error if already stopped */ }
+      try { recognitionRef.current.stop(); } catch (e) { /* ignore error */ }
     }
 
     if (noSpeechTimeoutRef.current) {
       clearTimeout(noSpeechTimeoutRef.current);
     }
 
-    // Add to conversation history
-    setConversationHistory(prev => [...prev, { speaker: 'child', text: userText }]);
-
-    const aiTimeout = setTimeout(() => {
-      if (isProcessingRef.current && aiStatus === 'thinking') {
-        console.log("AI timeout, using fallback");
-      }
-    }, 12000);
+    // Update history via ref and state
+    const newHistory = [...conversationHistoryRef.current, { speaker: 'child', text: userText }];
+    setConversationHistory(newHistory);
 
     try {
       const response = await getAIResponse(
-        selectedCharacter,
-        selectedBehavior,
+        selectedCharacterRef.current,
+        selectedBehaviorRef.current,
         userText,
-        conversationHistory,
-        childName
+        newHistory,
+        childNameRef.current
       );
-
-      clearTimeout(aiTimeout);
 
       const textToSpeak = response || "أنت رائع جداً! استمر في الحديث!";
 
       // Add AI response to history
-      setConversationHistory(prev => [...prev, { speaker: 'ai', text: textToSpeak }]);
+      const finalHistory = [...newHistory, { speaker: 'ai', text: textToSpeak }];
+      setConversationHistory(finalHistory);
 
       setAiStatus('speaking');
-      await speak(textToSpeak, selectedCharacter.id);
+      await speak(textToSpeak, selectedCharacterRef.current?.id);
 
     } catch (err) {
       console.error("AI Error:", err);
       setAiStatus('speaking');
-
-      const fallbackResponses = [
-        "أنا أسمعك يا بطل، أنت رائع!",
-        "ما شاء الله عليك! أخبرني المزيد",
-        "يا لك من بطل ذكي! استمر",
-        "أنت تجعلني فخوراً جداً!"
-      ];
-
-      const randomResponse = fallbackResponses[Math.floor(Math.random() * fallbackResponses.length)];
-      await speak(randomResponse, selectedCharacter.id);
-
+      const fallback = "أنا أسمعك يا بطل، أنت رائع! أخبرني المزيد";
+      await speak(fallback, selectedCharacterRef.current?.id);
     } finally {
       isProcessingRef.current = false;
-
       if (isCallActiveRef.current) {
         startListening();
       }
     }
-  }, [selectedCharacter, selectedBehavior, conversationHistory, childName, aiStatus, startListening]);
+  }, [startListening]);
 
   const initialGreeting = useCallback(async () => {
     if (!isCallActiveRef.current) return;
