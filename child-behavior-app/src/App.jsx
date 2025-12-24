@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, Phone, PhoneOff, Star, Sparkles, Zap, Heart, Trophy, Users, ChevronRight, Play, Pause, X, Loader2, AlertCircle } from 'lucide-react';
+import { Mic, MicOff, Phone, PhoneOff, Star, Sparkles, Zap, Heart, Trophy, Users, ChevronRight, Play, Pause, X, Loader2, AlertCircle, Volume2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getAIResponse, speak } from './api';
 
 const ChildBehaviorApp = () => {
+  const [hasStarted, setHasStarted] = useState(false);
   const [selectedCharacter, setSelectedCharacter] = useState(null);
   const [selectedBehavior, setSelectedBehavior] = useState(null);
   const [isCallActive, setIsCallActive] = useState(false);
@@ -35,78 +36,72 @@ const ChildBehaviorApp = () => {
     { id: 'sleep', name: 'النوم المبكر', emoji: '🌙', color: '#AA96DA', shortDesc: 'نم جيداً، استيقظ بطلاً' }
   ];
 
-  // Initialize Speech Recognition
-  useEffect(() => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      setError("متصفحك لا يدعم خاصية التعرف على الصوت. يرجى استخدام Google Chrome.");
-      return;
+  // Initialize Audio and Speech
+  const initializeApp = () => {
+    setHasStarted(true);
+
+    // Unlock AudioContext for iOS/PC
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (audioCtxRef.current.state === 'suspended') {
+      audioCtxRef.current.resume();
     }
 
-    const recognition = new SpeechRecognition();
-    recognition.continuous = false;
-    recognition.interimResults = false;
-    recognition.lang = 'ar-SA';
+    // Initialize Speech Recognition
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = 'ar-SA';
 
-    recognition.onstart = () => {
-      console.log("Recognition started");
-      setIsMicActuallyWorking(true);
-    };
+      recognition.onstart = () => setIsMicActuallyWorking(true);
+      recognition.onresult = (event) => handleAIInteraction(event.results[0][0].transcript);
+      recognition.onerror = (event) => {
+        setIsMicActuallyWorking(false);
+        if (event.error === 'not-allowed') setError("يرجى السماح بالميكروفون من إعدادات المتصفح");
+      };
+      recognition.onend = () => {
+        setIsMicActuallyWorking(false);
+        if (isCallActiveRef.current && window.currentAiStatus === 'listening') {
+          setTimeout(() => { try { recognition.start(); } catch (e) { } }, 300);
+        }
+      };
+      recognitionRef.current = recognition;
+    } else {
+      setError("متصفحك لا يدعم التعرف على الصوت. يرجى استخدام Chrome.");
+    }
 
-    recognition.onresult = (event) => {
-      const transcript = event.results[0][0].transcript;
-      console.log("Heard:", transcript);
-      handleAIInteraction(transcript);
-    };
-
-    recognition.onerror = (event) => {
-      console.error("Speech recognition error:", event.error);
-      setIsMicActuallyWorking(false);
-      if (event.error === 'not-allowed') {
-        setError("يرجى السماح بالوصول للميكروفون من إعدادات المتصفح.");
-      }
-    };
-
-    recognition.onend = () => {
-      console.log("Recognition ended");
-      setIsMicActuallyWorking(false);
-      // Auto-restart if we're still supposed to be listening
-      if (isCallActiveRef.current && window.currentAiStatus === 'listening') {
-        setTimeout(() => {
-          try { recognition.start(); } catch (e) { }
-        }, 300);
-      }
-    };
-
-    recognitionRef.current = recognition;
-  }, []);
+    // Trigger a silent sound to unlock audio on iOS
+    const utterance = new SpeechSynthesisUtterance("");
+    window.speechSynthesis.speak(utterance);
+  };
 
   useEffect(() => {
     window.currentAiStatus = aiStatus;
   }, [aiStatus]);
 
   const playRingingSound = () => {
-    try {
-      if (!audioCtxRef.current) audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
-      const ctx = audioCtxRef.current;
-      const playTone = (freq, start) => {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(freq, start);
-        gain.gain.setValueAtTime(0.1, start);
-        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.5);
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start(start);
-        osc.stop(start + 0.5);
-      };
-      const now = ctx.currentTime;
-      for (let i = 0; i < 5; i++) {
-        playTone(440, now + i * 1.5);
-        playTone(440, now + i * 1.5 + 0.2);
-      }
-    } catch (e) { console.error(e); }
+    if (!audioCtxRef.current) return;
+    const ctx = audioCtxRef.current;
+    const playTone = (freq, start) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, start);
+      gain.gain.setValueAtTime(0.05, start);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.5);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(start);
+      osc.stop(start + 0.5);
+    };
+    const now = ctx.currentTime;
+    for (let i = 0; i < 5; i++) {
+      playTone(440, now + i * 1.5);
+      playTone(440, now + i * 1.5 + 0.2);
+    }
   };
 
   const startCall = () => {
@@ -125,29 +120,24 @@ const ChildBehaviorApp = () => {
     setIsCallActive(false);
     isCallActiveRef.current = false;
     setAiStatus('');
-    if (recognitionRef.current) {
-      try { recognitionRef.current.stop(); } catch (e) { }
-    }
+    if (recognitionRef.current) try { recognitionRef.current.stop(); } catch (e) { }
     window.speechSynthesis.cancel();
   };
 
   const initialGreeting = async () => {
     setAiStatus('speaking');
     const greeting = `أهلاً يا بطل! أنا ${selectedCharacter.name}. أنا سعيد جداً بالحديث معك عن ${selectedBehavior.name}. كيف حالك اليوم؟`;
-    await speak(greeting);
+    await speak(greeting, selectedCharacter.id);
     if (isCallActiveRef.current) startListening();
   };
 
   const startListening = () => {
     setAiStatus('listening');
     if (recognitionRef.current) {
-      // Small delay to ensure TTS has fully finished and released the audio channel
       setTimeout(() => {
         try {
-          recognitionRef.current.stop(); // Stop any existing instance first
-          setTimeout(() => {
-            recognitionRef.current.start();
-          }, 100);
+          recognitionRef.current.stop();
+          setTimeout(() => recognitionRef.current.start(), 100);
         } catch (e) {
           try { recognitionRef.current.start(); } catch (err) { }
         }
@@ -157,21 +147,13 @@ const ChildBehaviorApp = () => {
 
   const handleAIInteraction = async (userText) => {
     if (!isCallActiveRef.current) return;
-
     setAiStatus('thinking');
-    if (recognitionRef.current) {
-      try { recognitionRef.current.stop(); } catch (e) { }
-    }
-
+    if (recognitionRef.current) try { recognitionRef.current.stop(); } catch (e) { }
     const response = await getAIResponse(selectedCharacter, selectedBehavior, userText);
     const textToSpeak = response || "أنت رائع جداً! أخبرني المزيد!";
-
     setAiStatus('speaking');
-    await speak(textToSpeak);
-
-    if (isCallActiveRef.current) {
-      startListening();
-    }
+    await speak(textToSpeak, selectedCharacter.id);
+    if (isCallActiveRef.current) startListening();
   };
 
   return (
@@ -181,29 +163,60 @@ const ChildBehaviorApp = () => {
       background: '#FFF9F0',
       fontFamily: '"Cairo", "Vazirmatn", sans-serif',
       direction: 'rtl',
-      overflowX: 'hidden',
       display: 'flex',
       flexDirection: 'column',
       alignItems: 'center'
     }}>
-      {/* Background Decorations */}
-      <div style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 0 }}>
-        {[...Array(6)].map((_, i) => (
-          <div key={i} style={{
-            position: 'absolute',
-            width: `${100 + i * 50}px`,
-            height: `${100 + i * 50}px`,
-            borderRadius: '50%',
-            background: ['#FFE5D9', '#D4F1F4', '#FFD1DC', '#E0BBE4', '#FFDAB9', '#B0E0E6'][i],
-            top: `${10 + i * 15}%`,
-            left: `${5 + i * 15}%`,
-            opacity: 0.1,
-            animation: `float ${10 + i * 2}s ease-in-out infinite`
-          }} />
-        ))}
-      </div>
+      {/* Start Overlay for iOS/PC Audio Unlock */}
+      <AnimatePresence>
+        {!hasStarted && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(255,255,255,0.95)',
+              zIndex: 3000,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '20px',
+              textAlign: 'center'
+            }}
+          >
+            <motion.div
+              animate={{ scale: [1, 1.1, 1] }}
+              transition={{ repeat: Infinity, duration: 2 }}
+              style={{ fontSize: '80px', marginBottom: '20px' }}
+            >
+              🚀
+            </motion.div>
+            <h1 style={{ fontSize: '32px', fontWeight: 900, color: '#FF6B9D', marginBottom: '10px' }}>مرحباً بك في رحلة الأبطال!</h1>
+            <p style={{ fontSize: '18px', color: '#666', marginBottom: '30px' }}>اضغط على الزر أدناه لتفعيل الصوت والميكروفون والبدء في المغامرة</p>
+            <button
+              onClick={initializeApp}
+              style={{
+                background: 'linear-gradient(135deg, #FF6B9D 0%, #FFB800 100%)',
+                color: 'white',
+                border: 'none',
+                borderRadius: '50px',
+                padding: '20px 60px',
+                fontSize: '24px',
+                fontWeight: 900,
+                cursor: 'pointer',
+                boxShadow: '0 10px 20px rgba(255,107,157,0.3)'
+              }}
+            >
+              ابدأ المغامرة الآن 🌟
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      {/* Main Content Wrapper */}
+      {/* Main Content */}
       <div style={{
         width: '100%',
         maxWidth: '1200px',
@@ -214,7 +227,6 @@ const ChildBehaviorApp = () => {
         flexDirection: 'column',
         alignItems: 'center'
       }}>
-        {/* Premium Header */}
         <header style={{
           width: '100%',
           background: 'white',
@@ -231,14 +243,10 @@ const ChildBehaviorApp = () => {
             margin: 0,
             background: 'linear-gradient(135deg, #FF6B9D 0%, #FFB800 50%, #4FACFE 100%)',
             WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            letterSpacing: '-0.02em'
+            WebkitTextFillColor: 'transparent'
           }}>
             🌟 رحلة الأبطال 🌟
           </h1>
-          <p style={{ fontSize: '18px', color: '#666', marginTop: '10px', fontWeight: 600 }}>
-            تعلم وامرح مع أبطالك المفضلين في مغامرات مذهلة!
-          </p>
         </header>
 
         {error && (
@@ -250,7 +258,7 @@ const ChildBehaviorApp = () => {
 
         {!isCallActive && !isRinging && (
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} style={{ width: '100%' }}>
-            {/* Disclaimer - Redesigned */}
+            {/* Disclaimer */}
             <div style={{
               background: 'linear-gradient(135deg, #FFF5E1 0%, #FFE5D9 100%)',
               border: '3px solid #FFD93D',
@@ -259,39 +267,21 @@ const ChildBehaviorApp = () => {
               marginBottom: '28px',
               display: 'flex',
               gap: '16px',
-              alignItems: 'flex-start',
-              boxShadow: '0 4px 12px rgba(255,217,61,0.2)'
+              alignItems: 'flex-start'
             }}>
-              <div style={{
-                fontSize: '32px',
-                flexShrink: 0,
-                animation: 'pulse 2s ease-in-out infinite'
-              }}>
-                👨‍👩‍👧‍👦
-              </div>
+              <div style={{ fontSize: '32px' }}>👨‍👩‍👧‍👦</div>
               <div style={{ flex: 1 }}>
-                <strong style={{ fontSize: '16px', color: '#D97706', display: 'block', marginBottom: '8px' }}>
-                  للآباء والأمهات الأعزاء
-                </strong>
-                <p style={{
-                  fontSize: '14px',
-                  color: '#92400E',
-                  margin: 0,
-                  lineHeight: 1.6
-                }}>
-                  هذا التطبيق مصمم لتعزيز السلوكيات الإيجابية بطريقة ممتعة. نوصي بالمراقبة الأبوية أثناء الاستخدام.
-                  المحادثات مدعومة بالذكاء الاصطناعي ويجب استخدامها كأداة مساعدة تحت إشرافكم.
+                <strong style={{ fontSize: '16px', color: '#D97706', display: 'block', marginBottom: '8px' }}>للآباء والأمهات الأعزاء</strong>
+                <p style={{ fontSize: '14px', color: '#92400E', margin: 0, lineHeight: 1.6 }}>
+                  هذا التطبيق مصمم لتعزيز السلوكيات الإيجابية. نوصي بالمراقبة الأبوية أثناء الاستخدام.
                 </p>
               </div>
             </div>
 
             {/* Character Selection */}
             <section style={{ width: '100%', marginBottom: '40px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '15px', marginBottom: '25px' }}>
-                <div style={{ width: '50px', height: '50px', background: '#FFD93D', borderRadius: '15px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px' }}>⭐</div>
-                <h2 style={{ fontSize: '28px', fontWeight: 900, margin: 0 }}>اختر بطلك المفضل</h2>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '20px' }}>
+              <h2 style={{ fontSize: '28px', fontWeight: 900, marginBottom: '25px' }}>اختر بطلك المفضل</h2>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '20px' }}>
                 {characters.map(char => (
                   <button
                     key={char.id}
@@ -302,14 +292,11 @@ const ChildBehaviorApp = () => {
                       borderRadius: '24px',
                       padding: '25px',
                       cursor: 'pointer',
-                      transition: 'all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)',
-                      transform: selectedCharacter?.id === char.id ? 'scale(1.05) translateY(-5px)' : 'scale(1)',
-                      boxShadow: selectedCharacter?.id === char.id ? `0 15px 30px ${char.color}25` : '0 5px 15px rgba(0,0,0,0.05)'
+                      transition: 'all 0.3s'
                     }}
                   >
                     <div style={{ fontSize: '64px', marginBottom: '15px' }}>{char.emoji}</div>
                     <div style={{ fontSize: '22px', fontWeight: 900, color: selectedCharacter?.id === char.id ? char.color : '#333' }}>{char.name}</div>
-                    <div style={{ fontSize: '14px', color: '#888', marginTop: '5px' }}>{char.personality}</div>
                   </button>
                 ))}
               </div>
@@ -317,11 +304,8 @@ const ChildBehaviorApp = () => {
 
             {/* Behavior Selection */}
             <section style={{ width: '100%', marginBottom: '40px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '15px', marginBottom: '25px' }}>
-                <div style={{ width: '50px', height: '50px', background: '#AA96DA', borderRadius: '15px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px' }}>✨</div>
-                <h2 style={{ fontSize: '28px', fontWeight: 900, margin: 0 }}>اختر السلوك</h2>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '20px' }}>
+              <h2 style={{ fontSize: '28px', fontWeight: 900, marginBottom: '25px' }}>اختر السلوك</h2>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '20px' }}>
                 {behaviors.map(b => (
                   <button
                     key={b.id}
@@ -332,20 +316,13 @@ const ChildBehaviorApp = () => {
                       borderRadius: '24px',
                       padding: '20px',
                       cursor: 'pointer',
-                      transition: 'all 0.3s',
                       display: 'flex',
                       alignItems: 'center',
-                      gap: '15px',
-                      textAlign: 'right',
-                      transform: selectedBehavior?.id === b.id ? 'scale(1.03)' : 'scale(1)',
-                      boxShadow: selectedBehavior?.id === b.id ? `0 10px 20px ${b.color}20` : '0 5px 15px rgba(0,0,0,0.05)'
+                      gap: '15px'
                     }}
                   >
-                    <div style={{ fontSize: '40px', background: '#f9f9f9', width: '70px', height: '70px', borderRadius: '18px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{b.emoji}</div>
-                    <div>
-                      <div style={{ fontSize: '20px', fontWeight: 900, color: selectedBehavior?.id === b.id ? b.color : '#333' }}>{b.name}</div>
-                      <div style={{ fontSize: '13px', color: '#888' }}>{b.shortDesc}</div>
-                    </div>
+                    <div style={{ fontSize: '40px' }}>{b.emoji}</div>
+                    <div style={{ fontSize: '20px', fontWeight: 900, color: selectedBehavior?.id === b.id ? b.color : '#333' }}>{b.name}</div>
                   </button>
                 ))}
               </div>
@@ -367,12 +344,10 @@ const ChildBehaviorApp = () => {
                   fontSize: '28px',
                   fontWeight: 900,
                   cursor: 'pointer',
-                  boxShadow: '0 20px 40px rgba(102,126,234,0.4)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  gap: '20px',
-                  marginTop: '20px'
+                  gap: '20px'
                 }}
               >
                 <Phone size={40} strokeWidth={3} />
@@ -387,9 +362,9 @@ const ChildBehaviorApp = () => {
       <AnimatePresence>
         {(isRinging || isCallActive) && (
           <motion.div
-            initial={{ opacity: 0, scale: 1.1 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.9 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
             style={{
               position: 'fixed',
               inset: 0,
@@ -405,12 +380,8 @@ const ChildBehaviorApp = () => {
               padding: '20px'
             }}
           >
-            {/* Animated Avatar */}
             <motion.div
-              animate={{
-                scale: aiStatus === 'speaking' ? [1, 1.1, 1] : 1,
-                rotate: isRinging ? [0, -5, 5, 0] : 0
-              }}
+              animate={{ scale: aiStatus === 'speaking' ? [1, 1.1, 1] : 1 }}
               transition={{ repeat: Infinity, duration: 2 }}
               style={{
                 width: 'min(250px, 60vw)',
@@ -422,41 +393,25 @@ const ChildBehaviorApp = () => {
                 justifyContent: 'center',
                 fontSize: 'min(120px, 30vw)',
                 marginBottom: '30px',
-                boxShadow: '0 30px 60px rgba(0,0,0,0.3)',
-                border: '10px solid rgba(255,255,255,0.3)'
+                boxShadow: '0 30px 60px rgba(0,0,0,0.3)'
               }}
             >
               {selectedCharacter.emoji}
             </motion.div>
 
-            <h2 style={{ fontSize: 'clamp(32px, 8vw, 56px)', fontWeight: 900, marginBottom: '10px', textAlign: 'center' }}>
-              {selectedCharacter.name}
-            </h2>
-            <p style={{ fontSize: 'clamp(18px, 4vw, 28px)', opacity: 0.9, marginBottom: '50px', textAlign: 'center', fontWeight: 600 }}>
+            <h2 style={{ fontSize: 'clamp(32px, 8vw, 56px)', fontWeight: 900, marginBottom: '10px' }}>{selectedCharacter.name}</h2>
+            <p style={{ fontSize: 'clamp(18px, 4vw, 28px)', opacity: 0.9, marginBottom: '50px' }}>
               {isRinging ? 'جاري الاتصال...' : `${selectedBehavior.emoji} ${selectedBehavior.name}`}
             </p>
 
-            {/* Status Indicator */}
             {!isRinging && (
-              <div style={{ minHeight: '150px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', marginBottom: '50px', gap: '20px' }}>
+              <div style={{ minHeight: '150px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px' }}>
                 {aiStatus === 'listening' && (
-                  <motion.div
-                    animate={{ scale: [1, 1.2, 1] }}
-                    transition={{ repeat: Infinity }}
-                    style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '15px' }}
-                  >
-                    <div style={{
-                      background: isMicActuallyWorking ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)',
-                      padding: '25px',
-                      borderRadius: '50%',
-                      boxShadow: isMicActuallyWorking ? '0 0 30px white' : 'none',
-                      transition: 'all 0.3s'
-                    }}>
+                  <motion.div animate={{ scale: [1, 1.2, 1] }} transition={{ repeat: Infinity }} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '15px' }}>
+                    <div style={{ background: isMicActuallyWorking ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)', padding: '25px', borderRadius: '50%' }}>
                       <Mic size={60} />
                     </div>
-                    <div style={{ fontSize: '26px', fontWeight: 900 }}>
-                      {isMicActuallyWorking ? 'أنا أسمعك الآن... تحدث!' : 'جاري تشغيل الميكروفون...'}
-                    </div>
+                    <div style={{ fontSize: '24px', fontWeight: 900 }}>{isMicActuallyWorking ? 'أنا أسمعك... تحدث!' : 'جاري تشغيل الميكروفون...'}</div>
                   </motion.div>
                 )}
                 {aiStatus === 'thinking' && (
@@ -467,29 +422,15 @@ const ChildBehaviorApp = () => {
                 )}
                 {aiStatus === 'speaking' && (
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '15px' }}>
-                    <div style={{ fontSize: '60px', animation: 'bounce 1s infinite' }}>📢</div>
+                    <Volume2 size={60} />
                     <div style={{ fontSize: '24px', fontWeight: 800 }}>استمع إلي! 🌟</div>
                   </div>
                 )}
 
-                {/* Manual Trigger with more force */}
                 {aiStatus === 'listening' && (
                   <button
-                    onClick={() => {
-                      setIsMicActuallyWorking(false);
-                      startListening();
-                    }}
-                    style={{
-                      background: 'white',
-                      border: 'none',
-                      borderRadius: '20px',
-                      padding: '12px 25px',
-                      fontSize: '16px',
-                      color: selectedCharacter.color,
-                      fontWeight: 900,
-                      cursor: 'pointer',
-                      boxShadow: '0 5px 15px rgba(0,0,0,0.2)'
-                    }}
+                    onClick={() => startListening()}
+                    style={{ background: 'white', border: 'none', borderRadius: '20px', padding: '10px 20px', fontSize: '16px', color: selectedCharacter.color, fontWeight: 900 }}
                   >
                     اضغط هنا إذا لم أسمعك 🎤
                   </button>
@@ -497,9 +438,8 @@ const ChildBehaviorApp = () => {
               </div>
             )}
 
-            {/* End Call Button */}
             <motion.button
-              whileHover={{ scale: 1.1, rotate: 90 }}
+              whileHover={{ scale: 1.1 }}
               whileTap={{ scale: 0.9 }}
               onClick={endCall}
               style={{
@@ -512,7 +452,8 @@ const ChildBehaviorApp = () => {
                 alignItems: 'center',
                 justifyContent: 'center',
                 cursor: 'pointer',
-                boxShadow: '0 15px 40px rgba(255,71,87,0.5)'
+                boxShadow: '0 15px 40px rgba(255,71,87,0.5)',
+                marginTop: '30px'
               }}
             >
               <PhoneOff size={50} color="white" strokeWidth={3} />
@@ -523,37 +464,10 @@ const ChildBehaviorApp = () => {
 
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&family=Vazirmatn:wght@400;700;900&display=swap');
-        
-        @keyframes float {
-          0%, 100% { transform: translateY(0px) rotate(0deg); }
-          50% { transform: translateY(-20px) rotate(5deg); }
-        }
-        
-        @keyframes bounce {
-          0%, 100% { transform: translateY(0); }
-          50% { transform: translateY(-10px); }
-        }
-        
-        .animate-spin {
-          animation: spin 1s linear infinite;
-        }
-        
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-        
-        body {
-          margin: 0;
-          padding: 0;
-          overflow-x: hidden;
-          background-color: #FFF9F0;
-        }
-        
-        * {
-          box-sizing: border-box;
-          -webkit-tap-highlight-color: transparent;
-        }
+        .animate-spin { animation: spin 1s linear infinite; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        body { margin: 0; padding: 0; overflow-x: hidden; background-color: #FFF9F0; }
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
       `}</style>
     </div>
   );
