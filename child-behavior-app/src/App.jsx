@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, Phone, PhoneOff, Star, Sparkles, Zap, Heart, Trophy, Users, ChevronRight, Play, Pause, X, Loader2 } from 'lucide-react';
+import { Mic, MicOff, Phone, PhoneOff, Star, Sparkles, Zap, Heart, Trophy, Users, ChevronRight, Play, Pause, X, Loader2, AlertCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getAIResponse, speak } from './api';
 
@@ -9,10 +9,12 @@ const ChildBehaviorApp = () => {
   const [isCallActive, setIsCallActive] = useState(false);
   const [isRinging, setIsRinging] = useState(false);
   const [aiStatus, setAiStatus] = useState(''); // 'thinking', 'speaking', 'listening'
+  const [error, setError] = useState(null);
 
   const recognitionRef = useRef(null);
   const audioCtxRef = useRef(null);
   const isCallActiveRef = useRef(false);
+  const [isMicActuallyWorking, setIsMicActuallyWorking] = useState(false);
 
   // Characters
   const characters = [
@@ -33,65 +35,78 @@ const ChildBehaviorApp = () => {
     { id: 'sleep', name: 'النوم المبكر', emoji: '🌙', color: '#AA96DA', shortDesc: 'نم جيداً، استيقظ بطلاً' }
   ];
 
-  // Initialize Speech Recognition once
+  // Initialize Speech Recognition
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      const recognition = new SpeechRecognition();
-      recognition.continuous = false;
-      recognition.interimResults = false;
-      recognition.lang = 'ar-SA';
-
-      recognition.onresult = (event) => {
-        const transcript = event.results[0][0].transcript;
-        console.log("Heard:", transcript);
-        handleAIInteraction(transcript);
-      };
-
-      recognition.onerror = (event) => {
-        console.error("Speech recognition error:", event.error);
-        if (event.error === 'no-speech' && isCallActiveRef.current) {
-          // Restart if no speech detected but call is active
-          try { recognition.start(); } catch (e) { }
-        }
-      };
-
-      recognition.onend = () => {
-        // Automatically restart listening if we are still in 'listening' status
-        if (isCallActiveRef.current && window.currentAiStatus === 'listening') {
-          try { recognition.start(); } catch (e) { }
-        }
-      };
-
-      recognitionRef.current = recognition;
+    if (!SpeechRecognition) {
+      setError("متصفحك لا يدعم خاصية التعرف على الصوت. يرجى استخدام Google Chrome.");
+      return;
     }
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.lang = 'ar-SA';
+
+    recognition.onstart = () => {
+      console.log("Recognition started");
+      setIsMicActuallyWorking(true);
+    };
+
+    recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript;
+      console.log("Heard:", transcript);
+      handleAIInteraction(transcript);
+    };
+
+    recognition.onerror = (event) => {
+      console.error("Speech recognition error:", event.error);
+      setIsMicActuallyWorking(false);
+      if (event.error === 'not-allowed') {
+        setError("يرجى السماح بالوصول للميكروفون من إعدادات المتصفح.");
+      }
+    };
+
+    recognition.onend = () => {
+      console.log("Recognition ended");
+      setIsMicActuallyWorking(false);
+      // Auto-restart if we're still supposed to be listening
+      if (isCallActiveRef.current && window.currentAiStatus === 'listening') {
+        setTimeout(() => {
+          try { recognition.start(); } catch (e) { }
+        }, 300);
+      }
+    };
+
+    recognitionRef.current = recognition;
   }, []);
 
-  // Update a global-like variable to track status for the onend handler
   useEffect(() => {
     window.currentAiStatus = aiStatus;
   }, [aiStatus]);
 
   const playRingingSound = () => {
-    if (!audioCtxRef.current) audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
-    const ctx = audioCtxRef.current;
-    const playTone = (freq, start) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(freq, start);
-      gain.gain.setValueAtTime(0.1, start);
-      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.5);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(start);
-      osc.stop(start + 0.5);
-    };
-    const now = ctx.currentTime;
-    for (let i = 0; i < 5; i++) {
-      playTone(440, now + i * 1.5);
-      playTone(440, now + i * 1.5 + 0.2);
-    }
+    try {
+      if (!audioCtxRef.current) audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+      const ctx = audioCtxRef.current;
+      const playTone = (freq, start) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, start);
+        gain.gain.setValueAtTime(0.1, start);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.5);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(start);
+        osc.stop(start + 0.5);
+      };
+      const now = ctx.currentTime;
+      for (let i = 0; i < 5; i++) {
+        playTone(440, now + i * 1.5);
+        playTone(440, now + i * 1.5 + 0.2);
+      }
+    } catch (e) { console.error(e); }
   };
 
   const startCall = () => {
@@ -110,7 +125,9 @@ const ChildBehaviorApp = () => {
     setIsCallActive(false);
     isCallActiveRef.current = false;
     setAiStatus('');
-    if (recognitionRef.current) recognitionRef.current.stop();
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch (e) { }
+    }
     window.speechSynthesis.cancel();
   };
 
@@ -124,11 +141,17 @@ const ChildBehaviorApp = () => {
   const startListening = () => {
     setAiStatus('listening');
     if (recognitionRef.current) {
-      try {
-        recognitionRef.current.start();
-      } catch (e) {
-        console.log("Recognition already started or error:", e);
-      }
+      // Small delay to ensure TTS has fully finished and released the audio channel
+      setTimeout(() => {
+        try {
+          recognitionRef.current.stop(); // Stop any existing instance first
+          setTimeout(() => {
+            recognitionRef.current.start();
+          }, 100);
+        } catch (e) {
+          try { recognitionRef.current.start(); } catch (err) { }
+        }
+      }, 500);
     }
   };
 
@@ -136,7 +159,9 @@ const ChildBehaviorApp = () => {
     if (!isCallActiveRef.current) return;
 
     setAiStatus('thinking');
-    if (recognitionRef.current) recognitionRef.current.stop();
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch (e) { }
+    }
 
     const response = await getAIResponse(selectedCharacter, selectedBehavior, userText);
     const textToSpeak = response || "أنت رائع جداً! أخبرني المزيد!";
@@ -215,6 +240,13 @@ const ChildBehaviorApp = () => {
             تعلم وامرح مع أبطالك المفضلين في مغامرات مذهلة!
           </p>
         </header>
+
+        {error && (
+          <div style={{ background: '#FFF0F0', color: '#D63031', padding: '15px 25px', borderRadius: '15px', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '10px', border: '2px solid #FFDADA', fontWeight: 700 }}>
+            <AlertCircle size={24} />
+            {error}
+          </div>
+        )}
 
         {!isCallActive && !isRinging && (
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} style={{ width: '100%' }}>
@@ -371,39 +403,60 @@ const ChildBehaviorApp = () => {
 
             {/* Status Indicator */}
             {!isRinging && (
-              <div style={{ minHeight: '120px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', marginBottom: '50px', gap: '20px' }}>
+              <div style={{ minHeight: '150px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', marginBottom: '50px', gap: '20px' }}>
                 {aiStatus === 'listening' && (
                   <motion.div
                     animate={{ scale: [1, 1.2, 1] }}
                     transition={{ repeat: Infinity }}
                     style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '15px' }}
                   >
-                    <div style={{ background: 'rgba(255,255,255,0.2)', padding: '20px', borderRadius: '50%' }}>
-                      <Mic size={50} />
+                    <div style={{
+                      background: isMicActuallyWorking ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)',
+                      padding: '25px',
+                      borderRadius: '50%',
+                      boxShadow: isMicActuallyWorking ? '0 0 30px white' : 'none',
+                      transition: 'all 0.3s'
+                    }}>
+                      <Mic size={60} />
                     </div>
-                    <div style={{ fontSize: '24px', fontWeight: 800 }}>أنا أسمعك... تحدث!</div>
+                    <div style={{ fontSize: '26px', fontWeight: 900 }}>
+                      {isMicActuallyWorking ? 'أنا أسمعك الآن... تحدث!' : 'جاري تشغيل الميكروفون...'}
+                    </div>
                   </motion.div>
                 )}
                 {aiStatus === 'thinking' && (
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '15px' }}>
-                    <Loader2 size={50} className="animate-spin" />
+                    <Loader2 size={60} className="animate-spin" />
                     <div style={{ fontSize: '24px', fontWeight: 800 }}>مممم... دعني أفكر... 💭</div>
                   </div>
                 )}
                 {aiStatus === 'speaking' && (
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '15px' }}>
-                    <Sparkles size={50} />
+                    <div style={{ fontSize: '60px', animation: 'bounce 1s infinite' }}>📢</div>
                     <div style={{ fontSize: '24px', fontWeight: 800 }}>استمع إلي! 🌟</div>
                   </div>
                 )}
 
-                {/* Manual Trigger if voice recognition fails to start */}
+                {/* Manual Trigger with more force */}
                 {aiStatus === 'listening' && (
                   <button
-                    onClick={() => startListening()}
-                    style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid white', borderRadius: '10px', padding: '5px 15px', fontSize: '12px', color: 'white', cursor: 'pointer' }}
+                    onClick={() => {
+                      setIsMicActuallyWorking(false);
+                      startListening();
+                    }}
+                    style={{
+                      background: 'white',
+                      border: 'none',
+                      borderRadius: '20px',
+                      padding: '12px 25px',
+                      fontSize: '16px',
+                      color: selectedCharacter.color,
+                      fontWeight: 900,
+                      cursor: 'pointer',
+                      boxShadow: '0 5px 15px rgba(0,0,0,0.2)'
+                    }}
                   >
-                    إذا لم أسمعك، اضغط هنا
+                    اضغط هنا إذا لم أسمعك 🎤
                   </button>
                 )}
               </div>
@@ -439,6 +492,11 @@ const ChildBehaviorApp = () => {
         @keyframes float {
           0%, 100% { transform: translateY(0px) rotate(0deg); }
           50% { transform: translateY(-20px) rotate(5deg); }
+        }
+        
+        @keyframes bounce {
+          0%, 100% { transform: translateY(0); }
+          50% { transform: translateY(-10px); }
         }
         
         .animate-spin {
