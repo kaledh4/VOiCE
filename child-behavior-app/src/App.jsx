@@ -178,15 +178,28 @@ const ChildBehaviorApp = () => {
       try { recognitionRef.current.stop(); } catch (e) { }
     }
 
-    const response = await getAIResponse(selectedCharacter, selectedBehavior, userText);
-    const textToSpeak = response || "أنت رائع جداً! أخبرني المزيد!";
+    const aiTimeout = setTimeout(() => {
+      if (isProcessingRef.current && aiStatus === 'thinking') {
+        handleAIInteraction("fallback_trigger"); // Force fallback
+      }
+    }, 8000);
 
-    setAiStatus('speaking');
-    await speak(textToSpeak, selectedCharacter.id);
+    try {
+      const response = await getAIResponse(selectedCharacter, selectedBehavior, userText === "fallback_trigger" ? "" : userText);
+      clearTimeout(aiTimeout);
+      const textToSpeak = response || "أنت رائع جداً! أخبرني المزيد!";
 
-    isProcessingRef.current = false;
-    if (isCallActiveRef.current) {
-      startListening();
+      setAiStatus('speaking');
+      await speak(textToSpeak, selectedCharacter.id);
+    } catch (err) {
+      console.error(err);
+      setAiStatus('speaking');
+      await speak("أنا أسمعك يا بطل، أنت رائع!", selectedCharacter.id);
+    } finally {
+      isProcessingRef.current = false;
+      if (isCallActiveRef.current) {
+        startListening();
+      }
     }
   };
 

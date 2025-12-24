@@ -3,7 +3,7 @@ const HUGGINGFACE_TOKEN = import.meta.env.VITE_HUGGINGFACE_TOKEN;
 export const getAIResponse = async (character, behavior, userMessage) => {
     if (!HUGGINGFACE_TOKEN) {
         console.warn("Hugging Face token is missing. Using simulation.");
-        return null;
+        return simulateResponse(character, behavior);
     }
 
     const characterPrompts = {
@@ -20,25 +20,51 @@ export const getAIResponse = async (character, behavior, userMessage) => {
         const response = await fetch(
             "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2",
             {
-                headers: { Authorization: `Bearer ${HUGGINGFACE_TOKEN}` },
+                headers: {
+                    "Authorization": `Bearer ${HUGGINGFACE_TOKEN}`,
+                    "Content-Type": "application/json"
+                },
                 method: "POST",
                 body: JSON.stringify({
                     inputs: `<s>[INST] You are ${character.name}. ${prompt}
           The child is talking to you about ${behavior.name}. 
           Respond in Arabic. Keep it very short (1-2 sentences).
           User Message: ${userMessage} [/INST]`,
+                    parameters: {
+                        max_new_tokens: 100,
+                        return_full_text: false
+                    }
                 }),
             }
         );
+
         const result = await response.json();
-        if (Array.isArray(result) && result[0]?.generated_text) {
-            return result[0].generated_text.split('[/INST]').pop().trim();
+
+        if (result.error) {
+            console.error("HF Error:", result.error);
+            return simulateResponse(character, behavior);
         }
-        return null;
+
+        if (Array.isArray(result) && result[0]?.generated_text) {
+            return result[0].generated_text.trim();
+        }
+
+        return simulateResponse(character, behavior);
     } catch (error) {
         console.error("Error fetching AI response:", error);
-        return null;
+        return simulateResponse(character, behavior);
     }
+};
+
+const simulateResponse = (character, behavior) => {
+    const fallbacks = [
+        "أنت رائع جداً! أخبرني المزيد عن مغامراتك اليوم؟",
+        "يا لك من بطل شجاع! أنا فخور بك جداً.",
+        "هذا مذهل! هل تحب أن نفعل شيئاً ممتعاً معاً؟",
+        "كلامك جميل جداً، استمر في كونك طفلاً رائعاً!",
+        "أنا أسمعك يا بطل، أنت دائماً تبهرني بأفعالك الجميلة."
+    ];
+    return fallbacks[Math.floor(Math.random() * fallbacks.length)];
 };
 
 // Enhanced Text-to-Speech with Gender and Character Profiles
@@ -54,7 +80,6 @@ export const speak = (text, characterId) => {
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.lang = 'ar-SA';
 
-        // Character Profiles: Gender, Pitch, Rate
         const profiles = {
             zuzu: { gender: 'female', pitch: 1.4, rate: 1.1 },
             elsa: { gender: 'female', pitch: 1.0, rate: 0.85 },
@@ -68,36 +93,41 @@ export const speak = (text, characterId) => {
         utterance.rate = profile.rate;
 
         const voices = window.speechSynthesis.getVoices();
-
-        // Logic to find the best matching voice
         let selectedVoice = null;
 
-        // 1. Try to find an Arabic voice that matches the gender in its name (OS dependent)
         if (profile.gender === 'female') {
-            selectedVoice = voices.find(v => v.lang.includes('ar') && (v.name.includes('Zira') || v.name.includes('Laila') || v.name.includes('Maged') === false));
+            selectedVoice = voices.find(v => v.lang.includes('ar') && (v.name.includes('Laila') || v.name.includes('Zira') || v.name.includes('Hoda') || v.name.includes('Naayf') === false));
         } else {
             selectedVoice = voices.find(v => v.lang.includes('ar') && (v.name.includes('Maged') || v.name.includes('Naayf') || v.name.includes('Tarik')));
         }
 
-        // 2. Fallback to any Arabic voice
         if (!selectedVoice) {
             selectedVoice = voices.find(v => v.lang.includes('ar-SA')) || voices.find(v => v.lang.includes('ar'));
         }
 
         if (selectedVoice) {
             utterance.voice = selectedVoice;
-            // If we found a male voice for a female character (or vice versa) due to system limits, 
-            // we adjust the pitch even more to compensate.
-            const isVoiceActuallyMale = selectedVoice.name.includes('Maged') || selectedVoice.name.includes('Naayf');
+            const isVoiceActuallyMale = selectedVoice.name.includes('Maged') || selectedVoice.name.includes('Naayf') || selectedVoice.name.includes('Tarik');
             if (profile.gender === 'female' && isVoiceActuallyMale) {
-                utterance.pitch = 1.6; // Force higher pitch
+                utterance.pitch = 1.6;
             } else if (profile.gender === 'male' && !isVoiceActuallyMale) {
-                utterance.pitch = 0.7; // Force lower pitch
+                utterance.pitch = 0.7;
             }
         }
 
         utterance.onend = () => resolve();
         utterance.onerror = () => resolve();
+
+        // Timeout fallback to ensure the promise resolves even if TTS fails
+        const timeout = setTimeout(() => {
+            window.speechSynthesis.cancel();
+            resolve();
+        }, 10000);
+
+        utterance.onend = () => {
+            clearTimeout(timeout);
+            resolve();
+        };
 
         window.speechSynthesis.speak(utterance);
     });
