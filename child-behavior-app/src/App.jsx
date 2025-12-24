@@ -250,6 +250,41 @@ const ChildBehaviorApp = () => {
 
         {!isCallActive && !isRinging && (
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} style={{ width: '100%' }}>
+            {/* Disclaimer - Redesigned */}
+            <div style={{
+              background: 'linear-gradient(135deg, #FFF5E1 0%, #FFE5D9 100%)',
+              border: '3px solid #FFD93D',
+              borderRadius: '24px',
+              padding: '20px 28px',
+              marginBottom: '28px',
+              display: 'flex',
+              gap: '16px',
+              alignItems: 'flex-start',
+              boxShadow: '0 4px 12px rgba(255,217,61,0.2)'
+            }}>
+              <div style={{
+                fontSize: '32px',
+                flexShrink: 0,
+                animation: 'pulse 2s ease-in-out infinite'
+              }}>
+                👨‍👩‍👧‍👦
+              </div>
+              <div style={{ flex: 1 }}>
+                <strong style={{ fontSize: '16px', color: '#D97706', display: 'block', marginBottom: '8px' }}>
+                  للآباء والأمهات الأعزاء
+                </strong>
+                <p style={{
+                  fontSize: '14px',
+                  color: '#92400E',
+                  margin: 0,
+                  lineHeight: 1.6
+                }}>
+                  هذا التطبيق مصمم لتعزيز السلوكيات الإيجابية بطريقة ممتعة. نوصي بالمراقبة الأبوية أثناء الاستخدام.
+                  المحادثات مدعومة بالذكاء الاصطناعي ويجب استخدامها كأداة مساعدة تحت إشرافكم.
+                </p>
+              </div>
+            </div>
+
             {/* Character Selection */}
             <section style={{ width: '100%', marginBottom: '40px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '15px', marginBottom: '25px' }}>
