@@ -6,13 +6,12 @@ export const getAIResponse = async (character, behavior, userMessage) => {
         return null;
     }
 
-    // Dialect and personality instructions based on character
     const characterPrompts = {
-        zuzu: "تحدث بلهجة مصرية مرحة ومشجعة كأنك بطلة خارقة قوية. استخدم كلمات مثل 'يا بطل'، 'يا بطل'، 'جامد جداً'.",
-        elsa: "تحدث بلغة عربية فصحى هادئة وراقية كأنك ملكة حكيمة. استخدم كلمات مثل 'عزيزي'، 'بني'، 'نور المستقبل'.",
-        spiderman: "تحدث بلهجة شامية أو بيضاء مرحة وسريعة كأنك مراهق بطل. استخدم كلمات مثل 'يا بطل'، 'كفو'، 'رهيب'.",
-        moana: "تحدث بلهجة خليجية أو بيضاء مليئة بالحماس والمغامرة. استخدم كلمات مثل 'يا شجاع'، 'يا بطل'، 'المستقبل قدامك'.",
-        antar: "تحدث بلغة عربية فصحى قوية وجزلة كأنك فارس شجاع من العصر الجاهلي. استخدم كلمات مثل 'يا فتى'، 'يا شجاع'، 'أبشر'."
+        zuzu: "تحدثي بلهجة مصرية مرحة ومشجعة كأنك بطلة خارقة قوية. استخدمي كلمات مثل 'يا بطل'، 'يا وحش'.",
+        elsa: "تحدثي بلغة عربية فصحى هادئة وراقية كأنك ملكة حكيمة. استخدمي كلمات مثل 'عزيزي'، 'بني'.",
+        spiderman: "تحدث بلهجة شامية أو بيضاء مرحة وسريعة كأنك مراهق بطل. استخدم كلمات مثل 'يا بطل'، 'كفو'.",
+        moana: "تحدثي بلهجة خليجية أو بيضاء مليئة بالحماس والمغامرة. استخدمي كلمات مثل 'يا شجاع'، 'يا بطل'.",
+        antar: "تحدث بلغة عربية فصحى قوية وجزلة كأنك فارس شجاع. استخدم كلمات مثل 'يا فتى'، 'يا شجاع'."
     };
 
     const prompt = characterPrompts[character.id] || "تحدث بالعربية بأسلوب مرح ومناسب للأطفال.";
@@ -42,7 +41,7 @@ export const getAIResponse = async (character, behavior, userMessage) => {
     }
 };
 
-// Enhanced Text-to-Speech with Voice Profiles
+// Enhanced Text-to-Speech with Gender and Character Profiles
 export const speak = (text, characterId) => {
     return new Promise((resolve) => {
         if (!window.speechSynthesis) {
@@ -55,26 +54,47 @@ export const speak = (text, characterId) => {
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.lang = 'ar-SA';
 
-        // Voice Profiles based on character
+        // Character Profiles: Gender, Pitch, Rate
         const profiles = {
-            zuzu: { pitch: 1.4, rate: 1.1 },      // High pitch, energetic
-            elsa: { pitch: 1.0, rate: 0.85 },     // Calm, slow
-            spiderman: { pitch: 1.2, rate: 1.2 }, // Fast, youthful
-            moana: { pitch: 1.3, rate: 1.0 },     // Energetic
-            antar: { pitch: 0.8, rate: 0.9 }      // Deep, slow
+            zuzu: { gender: 'female', pitch: 1.4, rate: 1.1 },
+            elsa: { gender: 'female', pitch: 1.0, rate: 0.85 },
+            spiderman: { gender: 'male', pitch: 1.2, rate: 1.1 },
+            moana: { gender: 'female', pitch: 1.3, rate: 1.0 },
+            antar: { gender: 'male', pitch: 0.7, rate: 0.9 }
         };
 
-        const profile = profiles[characterId] || { pitch: 1.0, rate: 1.0 };
+        const profile = profiles[characterId] || { gender: 'female', pitch: 1.0, rate: 1.0 };
         utterance.pitch = profile.pitch;
         utterance.rate = profile.rate;
 
-        // Try to find the best Arabic voice available on the system
         const voices = window.speechSynthesis.getVoices();
-        // Prefer higher quality voices if available (like 'Maged' on Mac or 'Naayf' on iOS)
-        const arabicVoice = voices.find(v => v.lang.includes('ar-SA')) ||
-            voices.find(v => v.lang.includes('ar'));
 
-        if (arabicVoice) utterance.voice = arabicVoice;
+        // Logic to find the best matching voice
+        let selectedVoice = null;
+
+        // 1. Try to find an Arabic voice that matches the gender in its name (OS dependent)
+        if (profile.gender === 'female') {
+            selectedVoice = voices.find(v => v.lang.includes('ar') && (v.name.includes('Zira') || v.name.includes('Laila') || v.name.includes('Maged') === false));
+        } else {
+            selectedVoice = voices.find(v => v.lang.includes('ar') && (v.name.includes('Maged') || v.name.includes('Naayf') || v.name.includes('Tarik')));
+        }
+
+        // 2. Fallback to any Arabic voice
+        if (!selectedVoice) {
+            selectedVoice = voices.find(v => v.lang.includes('ar-SA')) || voices.find(v => v.lang.includes('ar'));
+        }
+
+        if (selectedVoice) {
+            utterance.voice = selectedVoice;
+            // If we found a male voice for a female character (or vice versa) due to system limits, 
+            // we adjust the pitch even more to compensate.
+            const isVoiceActuallyMale = selectedVoice.name.includes('Maged') || selectedVoice.name.includes('Naayf');
+            if (profile.gender === 'female' && isVoiceActuallyMale) {
+                utterance.pitch = 1.6; // Force higher pitch
+            } else if (profile.gender === 'male' && !isVoiceActuallyMale) {
+                utterance.pitch = 0.7; // Force lower pitch
+            }
+        }
 
         utterance.onend = () => resolve();
         utterance.onerror = () => resolve();

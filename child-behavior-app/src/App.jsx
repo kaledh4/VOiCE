@@ -15,6 +15,7 @@ const ChildBehaviorApp = () => {
   const recognitionRef = useRef(null);
   const audioCtxRef = useRef(null);
   const isCallActiveRef = useRef(false);
+  const isProcessingRef = useRef(false); // To prevent multiple simultaneous AI calls
   const [isMicActuallyWorking, setIsMicActuallyWorking] = useState(false);
 
   // Characters
@@ -38,9 +39,10 @@ const ChildBehaviorApp = () => {
 
   // Initialize Audio and Speech
   const initializeApp = () => {
+    if (hasStarted) return;
     setHasStarted(true);
 
-    // Unlock AudioContext for iOS/PC
+    // Unlock AudioContext
     if (!audioCtxRef.current) {
       audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
     }
@@ -56,18 +58,35 @@ const ChildBehaviorApp = () => {
       recognition.interimResults = false;
       recognition.lang = 'ar-SA';
 
-      recognition.onstart = () => setIsMicActuallyWorking(true);
-      recognition.onresult = (event) => handleAIInteraction(event.results[0][0].transcript);
+      recognition.onstart = () => {
+        setIsMicActuallyWorking(true);
+        console.log("Recognition started");
+      };
+
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        if (transcript && !isProcessingRef.current) {
+          handleAIInteraction(transcript);
+        }
+      };
+
       recognition.onerror = (event) => {
+        console.error("Recognition error:", event.error);
         setIsMicActuallyWorking(false);
         if (event.error === 'not-allowed') setError("يرجى السماح بالميكروفون من إعدادات المتصفح");
       };
+
       recognition.onend = () => {
         setIsMicActuallyWorking(false);
-        if (isCallActiveRef.current && window.currentAiStatus === 'listening') {
-          setTimeout(() => { try { recognition.start(); } catch (e) { } }, 300);
+        console.log("Recognition ended");
+        // Only auto-restart if we are in listening mode and NOT processing
+        if (isCallActiveRef.current && window.currentAiStatus === 'listening' && !isProcessingRef.current) {
+          setTimeout(() => {
+            try { recognition.start(); } catch (e) { }
+          }, 300);
         }
       };
+
       recognitionRef.current = recognition;
     } else {
       setError("متصفحك لا يدعم التعرف على الصوت. يرجى استخدام Chrome.");
@@ -108,6 +127,7 @@ const ChildBehaviorApp = () => {
     if (!selectedCharacter || !selectedBehavior) return;
     setIsRinging(true);
     isCallActiveRef.current = true;
+    isProcessingRef.current = false;
     playRingingSound();
     setTimeout(() => {
       setIsRinging(false);
@@ -119,12 +139,16 @@ const ChildBehaviorApp = () => {
   const endCall = () => {
     setIsCallActive(false);
     isCallActiveRef.current = false;
+    isProcessingRef.current = false;
     setAiStatus('');
-    if (recognitionRef.current) try { recognitionRef.current.stop(); } catch (e) { }
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch (e) { }
+    }
     window.speechSynthesis.cancel();
   };
 
   const initialGreeting = async () => {
+    if (!isCallActiveRef.current) return;
     setAiStatus('speaking');
     const greeting = `أهلاً يا بطل! أنا ${selectedCharacter.name}. أنا سعيد جداً بالحديث معك عن ${selectedBehavior.name}. كيف حالك اليوم؟`;
     await speak(greeting, selectedCharacter.id);
@@ -132,28 +156,38 @@ const ChildBehaviorApp = () => {
   };
 
   const startListening = () => {
+    if (!isCallActiveRef.current) return;
     setAiStatus('listening');
     if (recognitionRef.current) {
-      setTimeout(() => {
-        try {
-          recognitionRef.current.stop();
-          setTimeout(() => recognitionRef.current.start(), 100);
-        } catch (e) {
-          try { recognitionRef.current.start(); } catch (err) { }
-        }
-      }, 500);
+      try {
+        recognitionRef.current.start();
+      } catch (e) {
+        // If already started, it's fine
+      }
     }
   };
 
   const handleAIInteraction = async (userText) => {
-    if (!isCallActiveRef.current) return;
+    if (!isCallActiveRef.current || isProcessingRef.current) return;
+
+    isProcessingRef.current = true;
     setAiStatus('thinking');
-    if (recognitionRef.current) try { recognitionRef.current.stop(); } catch (e) { }
+
+    // Stop recognition while processing and speaking
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch (e) { }
+    }
+
     const response = await getAIResponse(selectedCharacter, selectedBehavior, userText);
     const textToSpeak = response || "أنت رائع جداً! أخبرني المزيد!";
+
     setAiStatus('speaking');
     await speak(textToSpeak, selectedCharacter.id);
-    if (isCallActiveRef.current) startListening();
+
+    isProcessingRef.current = false;
+    if (isCallActiveRef.current) {
+      startListening();
+    }
   };
 
   return (
@@ -167,7 +201,7 @@ const ChildBehaviorApp = () => {
       flexDirection: 'column',
       alignItems: 'center'
     }}>
-      {/* Start Overlay for iOS/PC Audio Unlock */}
+      {/* Start Overlay */}
       <AnimatePresence>
         {!hasStarted && (
           <motion.div
